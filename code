@@ -1,0 +1,160 @@
+#include<Servo.h>
+
+#include "NewPing.h"
+
+#define waterPumpPin D6
+#define servoSignalPin D4
+
+#define trigPinWater D7
+#define echoPinWater D8
+
+#define trigPinFood D1
+#define echoPinFood D2
+
+#define minServo 800
+#define maxServo 2000
+#define maxDistance 400
+
+
+NewPing sonarWater(trigPinWater, echoPinWater, maxDistance);
+NewPing sonarFood(trigPinFood, echoPinFood, maxDistance);
+
+int waterPumpState = 1;
+int distanceWater = 0;
+int distanceFood = 0;
+
+const int maxDist = 16;
+const int minDist = 2;
+
+
+Servo myservo;
+
+
+#include <ESP8266WiFi.h>
+#include <WiFiClient.h>
+#include <ESP8266WebServer.h>
+#include <ESP8266mDNS.h>
+
+#ifndef STASSID
+#define STASSID "SSID"
+#define STAPSK  "PASS"
+#endif
+
+const char *ssid = STASSID;
+const char *password = STAPSK;
+
+ESP8266WebServer server(80);
+
+int getPercentage(int dist) {
+  int result = 100 - 100 * (dist - minDist) / (maxDist - minDist);
+  if (result < 0)
+    result = 0;
+  if (result > 100)
+    result = 100;
+  return result;
+}
+
+void handleRoot() {
+
+  String HTML = "<!DOCTYPE html>\n<html>\n<body>\n    <div class=\"col\">\n \n        <a href=\"/\" class=\"button-a\">\n            <div class=\"button-div\">\n                Refresh\n            </div>\n        </a>       <h1>\n            Food Tank\n        </h1>\n        <h3>\n            ";
+  
+  HTML += String(getPercentage(distanceFood));
+  HTML += "%\n        </h3>\n        <h2>\n            Food Bowl\n        </h2>\n        <h3>\n            80%\n        </h3>\n        <a href=\"/food?action=add\" class=\"button-a\">\n            <div class=\"button-div\">\n                Add food\n            </div>\n        </a>\n        <h1>\n            Water Tank\n        </h1>\n        <h3>\n            ";
+  HTML += String(getPercentage(distanceWater));
+  HTML += "%\n        </h3>\n        <h2>\n            Water Bowl\n        </h2>\n        <h3>\n            80%\n        </h3>\n        <a href=\"/water?action=add\"  class=\"button-a\">\n            <div class=\"button-div\">\n                Add water\n            </div>\n        </a>\n    </div>\n\n</body>\n</html>\n\n<style>\n  body{\n    background: #ffffff;\n    margin: 0;\n    flex-grow: 1;\n    font-family: 'Trebuchet MS', 'Lucida Sans Unicode', 'Lucida Grande', 'Lucida Sans', Arial, sans-serif;\n  }\n\n  .col {\n    display: flex;\n    flex-direction: column;\n    justify-content: center;\n    align-items: center;\n  }\n\n  h1 {\n      margin-bottom: 0 !important;\n  }\n\n  h2 {\n      margin: 0 !important;\n  }\n\n  h3 {\n      margin: 0 !important;\n  }\n\n  .button-div {\n      text-align: center;\n      height: 60px;\n      width: 130px;\n      background-color: cornflowerblue;\n      display: table-cell;\n      vertical-align: middle;\n  }\n\n  \n  .button-a {\n      font-weight: bold;\n      font-size: x-large;\n      display: table;\n      color: white;\n      text-decoration: none;\n      margin-top: 10px;\n  }\n\n  .button-div:hover {\n      \n    background-color: rgb(81, 119, 190);\n  }\n</style>";
+  server.send(200, "text/html", HTML);  
+}
+void handleNotFound() {
+
+  String message = "File Not Found\n\n";
+  message += "URI: ";
+  message += server.uri();
+  message += "\nMethod: ";
+  message += (server.method() == HTTP_GET) ? "GET" : "POST";
+  message += "\nArguments: ";
+  message += server.args();
+  message += "\n";
+
+  for (uint8_t i = 0; i < server.args(); i++) {
+    message += " " + server.argName(i) + ": " + server.arg(i) + "\n";
+  }
+
+  server.send(404, "text/plain", message);
+
+}
+
+void setup(void) {
+  Serial.begin(9600);
+  myservo.attach(servoSignalPin, minServo, maxServo);
+  myservo.writeMicroseconds(minServo);
+ 
+  pinMode(waterPumpPin, OUTPUT);
+  digitalWrite(waterPumpPin, waterPumpState);
+
+  updateSensors();
+
+  WiFi.mode(WIFI_STA);
+  WiFi.begin(ssid, password);
+  Serial.println("");
+  
+  // Wait for connection
+  while (WiFi.status() != WL_CONNECTED) {
+    delay(500);
+    Serial.print(".");
+  }
+
+  Serial.println("");
+  Serial.print("Connected to ");
+  Serial.println(ssid);
+  Serial.print("IP address: ");
+  Serial.println(WiFi.localIP());
+
+  server.on("/", handleRoot);
+  server.on("/food", HTTP_GET, foodControl);
+  server.on("/water", HTTP_GET, waterControl);
+  server.onNotFound(handleNotFound);
+  server.begin();
+  Serial.println("HTTP server started");
+
+}
+
+void loop(void) {
+  
+  server.handleClient();
+  
+  updateSensors();
+
+  delay(100);
+}
+
+void foodControl() {
+  if(server.arg("action") == "add") {
+      myservo.writeMicroseconds(maxServo);
+      delay(500);
+      myservo.writeMicroseconds(minServo);
+  } else if(server.arg("action") == "fill") {
+    Serial.println("Fill...");
+
+  }
+
+  handleRoot();
+}
+
+void waterControl() {
+  if(server.arg("action") == "add") {
+    digitalWrite(waterPumpPin, LOW);
+    delay(800);
+    digitalWrite(waterPumpPin, HIGH);
+  } else if(server.arg("action") == "fill") {
+    Serial.println("Fill...");
+
+  }
+
+  handleRoot();
+}
+
+void updateSensors() {
+  distanceWater = sonarWater.ping_cm();
+
+  distanceFood = sonarFood.ping_cm();
+}
